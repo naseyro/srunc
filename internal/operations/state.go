@@ -1,13 +1,24 @@
 package operations
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/naseyro/srunc/internal/container"
+)
 
 type StateOpts struct {
 	ID string
 }
 
 func State(opts *StateOpts) (string, error) {
-	fmt.Println("State Function")
-	fmt.Printf("State of container %s is running\n", opts.ID)
-	return "", nil
+	ctr, err := container.Load(opts.ID)
+	if err != nil {
+		return "", err
+	}
+	state, err := json.Marshal(ctr.State)
+	if err != nil {
+		return "", fmt.Errorf("error marshaling state: %w", err)
+	}
+	return string(state), nil
 }
