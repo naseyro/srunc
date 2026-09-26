@@ -3,13 +3,21 @@ package container
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"github.com/opencontainers/runtime-spec/specs-go"
+	"golang.org/x/sys/unix"
 )
 
-const containerRootDir = "/var/lib/srunc/containers"
+const (
+	containerRootDir = "/var/lib/srunc/containers"
+	initSock         = "init.sock"
+	containerSock    = "srunc.sock"
+)
 
 type Container struct {
 	State *specs.State
@@ -40,6 +48,134 @@ func New(opts *NewContainerOpts) (*Container, error) {
 	}
 
 	return &c, nil
+}
+
+func (c *Container) Init() error {
+	// TODO: Configure container
+
+	listener, err := net.Listen("unix", filepath.Join(containerRootDir, c.State.ID, initSock))
+	if err != nil {
+		return fmt.Errorf("error creating the init container socket %w", err)
+	}
+	defer listener.Close()
+	cmd := exec.Command("/proc/self/exe", "reexec", c.State.ID)
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err = cmd.Start(); err != nil {
+		return fmt.Errorf("error re executing the container process %w", err)
+	}
+	c.State.Pid = cmd.Process.Pid
+
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("error while releasing container process: %w", err)
+	}
+
+	conn, err := listener.Accept()
+	if err != nil {
+		return fmt.Errorf("error accepting on init sock %w", err)
+	}
+	defer conn.Close()
+
+	b := make([]byte, 128)
+	n, err := conn.Read(b)
+	if err != nil {
+		return fmt.Errorf("error reading bytes from init sock connection: %w", err)
+	}
+
+	msg := string(b[:n])
+	if msg != "ready" {
+		return fmt.Errorf("error expecting 'ready' but received '%s'", msg)
+	}
+
+	c.State.Status = specs.StateCreated
+	return nil
+}
+
+func (c *Container) Start() error {
+	if c.Spec.Process == nil {
+		return nil
+	}
+
+	if !c.canBeStarted() {
+		return fmt.Errorf("container cannot be started in current state (%s)", c.State.Status)
+	}
+
+	conn, err := net.Dial(
+		"unix",
+		filepath.Join(containerRootDir, c.State.ID, containerSock),
+	)
+	if err != nil {
+		return fmt.Errorf("error: dial container sock: %w", err)
+	}
+
+	if _, err := conn.Write([]byte("start")); err != nil {
+		return fmt.Errorf("error writing 'start' message to srunc sock: %w", err)
+	}
+	conn.Close()
+
+	c.State.Status = specs.StateRunning
+
+	return nil
+}
+
+func (c *Container) Reexec() error {
+	initConn, err := net.Dial(
+		"unix",
+		filepath.Join(containerRootDir, c.State.ID, initSock),
+	)
+	if err != nil {
+		return fmt.Errorf("dial init sock: %w", err)
+	}
+
+	if _, err := initConn.Write([]byte("ready")); err != nil {
+		return fmt.Errorf("write 'ready' msg to init sock: %w", err)
+	}
+
+	initConn.Close()
+
+	listener, err := net.Listen(
+		"unix",
+		filepath.Join(containerRootDir, c.State.ID, containerSock),
+	)
+	if err != nil {
+		return fmt.Errorf("listen on container sock: %w", err)
+	}
+
+	containerConn, err := listener.Accept()
+	if err != nil {
+		return fmt.Errorf("accept on container sock: %w", err)
+	}
+
+	b := make([]byte, 128)
+	n, err := containerConn.Read(b)
+	if err != nil {
+		return fmt.Errorf("read bytes from container sock: %w", err)
+	}
+
+	msg := string(b[:n])
+	if msg != "start" {
+		return fmt.Errorf("expecting 'start' but received '%s'", msg)
+	}
+
+	containerConn.Close()
+	listener.Close()
+
+	bin, err := exec.LookPath(c.Spec.Process.Args[0])
+	if err != nil {
+		return fmt.Errorf("find path of user process binary: %w", err)
+	}
+
+	args := c.Spec.Process.Args
+	env := os.Environ()
+
+	if err := syscall.Exec(bin, args, env); err != nil {
+		return fmt.Errorf("execve (%s, %s, %v): %w", bin, args, env, err)
+	}
+
+	panic("if you got here then something went horribly wrong")
 }
 
 func (c *Container) Save() error {
@@ -103,10 +239,19 @@ func (c *Container) Delete(force bool) error {
 	if !force && !c.canBeDeleted() {
 		return fmt.Errorf("error: deleting non-stopped container without force is not permitted. Either to stop container or use --force")
 	}
+
+	process, err := os.FindProcess(c.State.Pid)
+	if err != nil {
+		return fmt.Errorf("error finding container process to delete: %w", err)
+	}
+	if process != nil {
+		process.Signal(unix.SIGKILL)
+	}
+
 	if err := os.RemoveAll(
 		filepath.Join(containerRootDir, c.State.ID),
 	); err != nil {
-		return fmt.Errorf("delete container directory: %w", err)
+		return fmt.Errorf("error deleting container directory: %w", err)
 	}
 
 	return nil
@@ -119,4 +264,8 @@ func exists(containerID string) bool {
 
 func (c *Container) canBeDeleted() bool {
 	return c.State.Status == specs.StateStopped
+}
+
+func (c *Container) canBeStarted() bool {
+	return c.State.Status == specs.StateCreated
 }

@@ -37,11 +37,20 @@ func Create(opts *CreateOpts) error {
 		Spec:   spec,
 	})
 	if err != nil {
-		return fmt.Errorf("error creating container: %w", err)
+		return fmt.Errorf("error creating container %w", err)
 	}
 
 	if err := ctr.Save(); err != nil {
-		return fmt.Errorf("error saving container state: %w", err)
+		return fmt.Errorf("error saving the container state %w", err)
 	}
+
+	if err := ctr.Init(); err != nil {
+		return fmt.Errorf("error initializing the container %w", err)
+	}
+
+	if err := ctr.Save(); err != nil {
+		return fmt.Errorf("error saving the container state %w", err)
+	}
+
 	return nil
 }

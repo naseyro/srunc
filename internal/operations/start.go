@@ -1,13 +1,27 @@
 package operations
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/naseyro/srunc/internal/container"
+)
 
 type StartOpts struct {
 	ID string
 }
 
 func Start(opts *StartOpts) error {
-	fmt.Println("Start Function")
-	fmt.Printf("Starting container %s\n", opts.ID)
+	cntr, err := container.Load(opts.ID)
+	if err != nil {
+		return fmt.Errorf("load container: %w", err)
+	}
+
+	if err := cntr.Start(); err != nil {
+		return fmt.Errorf("start container: %w", err)
+	}
+
+	if err := cntr.Save(); err != nil {
+		return fmt.Errorf("save container: %w", err)
+	}
 	return nil
 }
