@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/naseyro/srunc/internal/hooks"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
 )
@@ -51,6 +52,12 @@ func New(opts *NewContainerOpts) (*Container, error) {
 }
 
 func (c *Container) Init() error {
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.CreateRuntime, c.State); err != nil {
+			return fmt.Errorf("error executing createRuntime hook %w", err)
+		}
+	}
+
 	// TODO: Configure container
 
 	listener, err := net.Listen("unix", filepath.Join(containerRootDir, c.State.ID, initSock))
@@ -58,11 +65,18 @@ func (c *Container) Init() error {
 		return fmt.Errorf("error creating the init container socket %w", err)
 	}
 	defer listener.Close()
+
 	cmd := exec.Command("/proc/self/exe", "reexec", c.State.ID)
 
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.CreateContainer, c.State); err != nil {
+			return fmt.Errorf("error executing createContainer hook %w", err)
+		}
+	}
 
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("error re executing the container process %w", err)
@@ -122,16 +136,17 @@ func (c *Container) Start() error {
 }
 
 func (c *Container) Reexec() error {
+	// 7. TODO: configure container
 	initConn, err := net.Dial(
 		"unix",
 		filepath.Join(containerRootDir, c.State.ID, initSock),
 	)
 	if err != nil {
-		return fmt.Errorf("dial init sock: %w", err)
+		return fmt.Errorf("error in dial init sock: %w", err)
 	}
 
 	if _, err := initConn.Write([]byte("ready")); err != nil {
-		return fmt.Errorf("write 'ready' msg to init sock: %w", err)
+		return fmt.Errorf("error writing 'ready' msg to init sock: %w", err)
 	}
 
 	initConn.Close()
@@ -141,7 +156,7 @@ func (c *Container) Reexec() error {
 		filepath.Join(containerRootDir, c.State.ID, containerSock),
 	)
 	if err != nil {
-		return fmt.Errorf("listen on container sock: %w", err)
+		return fmt.Errorf("error listening on container sock: %w", err)
 	}
 
 	containerConn, err := listener.Accept()
@@ -162,6 +177,14 @@ func (c *Container) Reexec() error {
 
 	containerConn.Close()
 	listener.Close()
+
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(
+			c.Spec.Hooks.StartContainer, c.State,
+		); err != nil {
+			return fmt.Errorf("exec startcontainer hooks: %w", err)
+		}
+	}
 
 	bin, err := exec.LookPath(c.Spec.Process.Args[0])
 	if err != nil {
@@ -252,6 +275,12 @@ func (c *Container) Delete(force bool) error {
 		filepath.Join(containerRootDir, c.State.ID),
 	); err != nil {
 		return fmt.Errorf("error deleting container directory: %w", err)
+	}
+
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.Poststop, c.State); err != nil {
+			fmt.Printf("failed to exec poststop hook to cleanup %w\n", err)
+		}
 	}
 
 	return nil
