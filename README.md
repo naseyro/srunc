@@ -1,3 +1,3 @@
-# minictr
+# srunc
 
-A simple low-level container runtime, written in Go!
+A simple low-level container runtime!
