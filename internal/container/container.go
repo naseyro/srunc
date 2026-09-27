@@ -117,6 +117,12 @@ func (c *Container) Start() error {
 		return fmt.Errorf("container cannot be started in current state (%s)", c.State.Status)
 	}
 
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.Prestart, c.State); err != nil {
+			return fmt.Errorf("error calling the prestart hook %w", err)
+		}
+	}
+
 	conn, err := net.Dial(
 		"unix",
 		filepath.Join(containerRootDir, c.State.ID, containerSock),
@@ -131,6 +137,12 @@ func (c *Container) Start() error {
 	conn.Close()
 
 	c.State.Status = specs.StateRunning
+
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.Poststart, c.State); err != nil {
+			return fmt.Errorf("error calling the Poststart hook %w", err)
+		}
+	}
 
 	return nil
 }
@@ -182,7 +194,7 @@ func (c *Container) Reexec() error {
 		if err := hooks.ExecHooks(
 			c.Spec.Hooks.StartContainer, c.State,
 		); err != nil {
-			return fmt.Errorf("exec startcontainer hooks: %w", err)
+			return fmt.Errorf("error calling startcontainer hook: %w", err)
 		}
 	}
 
@@ -279,7 +291,7 @@ func (c *Container) Delete(force bool) error {
 
 	if c.Spec.Hooks != nil {
 		if err := hooks.ExecHooks(c.Spec.Hooks.Poststop, c.State); err != nil {
-			fmt.Printf("failed to exec poststop hook to cleanup %w\n", err)
+			fmt.Printf("failed to exec poststop hook to cleanup %s\n", err)
 		}
 	}
 
