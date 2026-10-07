@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"os"
-
 	"github.com/naseyro/srunc/internal/operations"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +25,7 @@ func createCmd() *cobra.Command {
 	}
 
 	// should we configure cwd to /run/ better than the working directory for default values?
-	cwd, _ := os.Getwd()
+	cwd := "alpinefs"
 	cmd.Flags().StringP("bundle", "b", cwd, "Path to bundle directory")
 
 	return cmd
