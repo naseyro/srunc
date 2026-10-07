@@ -13,7 +13,7 @@ func RootCmd() *cobra.Command {
 		createCmd(),
 		startCmd(),
 		deleteCmd(),
-		killCmd(),
+		signalCmd(),
 		reexecCmd(),
 	)
 	return cmd

@@ -147,6 +147,22 @@ func (c *Container) Start() error {
 	return nil
 }
 
+func (c *Container) Signal(sig unix.Signal) error {
+	if !c.canBeSignaled() {
+		return fmt.Errorf("can't signal current process with state %v. Expected state is 'Created' or 'Running'", c.State.Status)
+	}
+	if err := syscall.Kill(c.State.Pid, sig); err != nil {
+		return fmt.Errorf("error sending signal %d to process %d: %w", sig, c.State.Pid, err)
+	}
+	c.State.Status = specs.StateStopped
+	if c.Spec.Hooks != nil {
+		if err := hooks.ExecHooks(c.Spec.Hooks.Poststop, c.State); err != nil {
+			fmt.Printf("warning: error while sending poststop hook: %s", err)
+		}
+	}
+	return nil
+}
+
 func (c *Container) Reexec() error {
 	// 7. TODO: configure container
 	initConn, err := net.Dial(
@@ -309,4 +325,8 @@ func (c *Container) canBeDeleted() bool {
 
 func (c *Container) canBeStarted() bool {
 	return c.State.Status == specs.StateCreated
+}
+
+func (c *Container) canBeSignaled() bool {
+	return c.State.Status == specs.StateCreated || c.State.Status == specs.StateRunning
 }

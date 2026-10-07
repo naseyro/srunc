@@ -5,15 +5,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func killCmd() *cobra.Command {
+func signalCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:  "kill [flags] CONTAINER_ID SIGNAL",
+		Use:  "signal [flags] CONTAINER_ID SIGNAL",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			containerID := args[0]
 			signal := args[1]
 
-			return operations.Kill(&operations.KillOpts{
+			return operations.Signal(&operations.SignalOpts{
 				ID:     containerID,
 				Signal: signal,
 			})
